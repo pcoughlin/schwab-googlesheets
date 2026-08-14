@@ -52,93 +52,225 @@ function schwab_backfromPane(d) {
 }
 
 //******************************MAIN FUNCTIONS***************************************************
-
-/**
- * Call Ameritrade API to get the price of stockSymbol.
- *
- * @param {"GOOG"} stockSymbol the stock's ticker symbol
- * @param {"lastPrice"} priceType the price field to use. Valid examples are [ "lastPrice" | "openPrice" | "highPrice" | "lowPrice" | "closePrice" | "regularMarketLastPrice" ]
- * @customfunction
- */
-
-function schwab_GetQuote(stockSymbol,priceType) {
-  // Check if stockSymbol is empty
-  if (stockSymbol === "" || stockSymbol === null || typeof stockSymbol === "undefined") {
-    return "Stock symbol is empty";
-  }
-
-  // Check if priceType is empty
-  if (priceType === "" || priceType === null || typeof priceType === "undefined") {
-    return "Price type is empty";
-  }
-  
-  var authorization = schwab_GetBearerString();
-  var options = {
-    "method" : "GET",
-    "headers" :  {"Authorization" : authorization},
-  };
-  var myurl="https://api.schwabapi.com/marketdata/v1/quotes?symbols=" + stockSymbol;
-  var result=UrlFetchApp.fetch(myurl, options);
-  
-  var contents = result.getContentText();
-  var json = JSON.parse(contents);
-  
-  var price = json[stockSymbol]["quote"][priceType];
-  Logger.log(stockSymbol + ": " + price);
-  
-  return price;
-}
-
-
 /**
  * Returns a balance value of your Schwab account.
  *
- * @param {"equity"} balance the balance to obtain. Valid examples are [ "cashBalance" | "liquidationValue" | "longMarketValue" | "availableFunds" | "buyingPower" | "equity" | "longMarginValue" | "maintenanceRequirement" | "marginBalance" ]. Additional examples can be found in the API documentation.
+ * @param {"availableFunds"|"cashBalance"|"equityPercentage"|"maintenanceRequirement"|"bondValue"|"pendingDeposits"|"sma"|"longMarketValue"|"moneyMarketFund"|"availableFundsNonMarginableTrade"|"shortOptionMarketValue"|"shortBalance"|"buyingPower"|"dayTradingBuyingPower"|"liquidationValue"|"longOptionMarketValue"|"mutualFundValue"|"regTCall"|"maintenanceCall"|"savings"|"shortMarketValue"|"longMarginValue"|"shortMarginValue"|"buyingPowerNonMarginableTrade"|"marginBalance"|"accruedInterest"|"intradayBuyingPowerAmount"|"equity"|"cashReceipts"} balance The balance field to obtain
  * @customfunction
  */
 function schwab_Balance(balance) {
+  // Default to "availableFunds" if no balance string is provided
+  if (balance === "" || balance === null || typeof balance === "undefined") {
+    balance = "availableFunds";
+  }
+
+  // Valid choices
+  var validBalances = [
+    "availableFunds","cashBalance","equityPercentage","maintenanceRequirement","bondValue",
+    "pendingDeposits","sma","longMarketValue","moneyMarketFund","availableFundsNonMarginableTrade",
+    "shortOptionMarketValue","shortBalance","buyingPower","dayTradingBuyingPower","liquidationValue",
+    "longOptionMarketValue","mutualFundValue","regTCall","maintenanceCall","savings","shortMarketValue",
+    "longMarginValue","shortMarginValue","buyingPowerNonMarginableTrade","marginBalance",
+    "accruedInterest","intradayBuyingPowerAmount","equity","cashReceipts"
+  ];
+
+  // Validate the parameter before making the API call
+  if (validBalances.indexOf(balance) === -1) {
+    return "Invalid balance parameter: '" + balance + "'. See function help for valid options.";
+  }
+
   var authorization = schwab_GetBearerString();
   var options = {
     "method" : "GET",
     "headers" :  {"Authorization" : authorization},
+    "muteHttpExceptions": true
   };
   var myUrl =
     "https://api.schwabapi.com/trader/v1/accounts";
   var result = UrlFetchApp.fetch(myUrl, options);
 
   var contents = result.getContentText();
-  var json = JSON.parse(contents);
-  var value = json[0]["securitiesAccount"]["currentBalances"][balance];
-  Logger.log(value)
+  var responseCode = result.getResponseCode();
+  Logger.log("schwab_Balance HTTP " + responseCode + " → " + contents);
+
+  if (responseCode !== 200) {
+    return "HTTP Error " + responseCode + ": " + contents.substring(0, 150);
+  }
+
+  var json;
+  try {
+    json = JSON.parse(contents);
+  } catch (e) {
+    return "Invalid JSON response";
+  }
+
+  // Defensive checks on the response structure
+  if (!json || !json[0] || !json[0]["securitiesAccount"] 
+    || !json[0]["securitiesAccount"]["currentBalances"]) {
+    return "Unexpected response structure - currentBalances not found";
+  }
+
+  var currentBalances = json[0]["securitiesAccount"]["currentBalances"];
+
+  // Check that the requested balance key actually exists in the returned object
+  if (!currentBalances.hasOwnProperty(balance)) {
+    return "Balance field '" + balance + "' was not returned by the API";
+  }
+
+  var value = currentBalances[balance];
+  Logger.log(value);
 
   return value;
 }
 
+/**
+ * Call Schwab-API to get quote field(s) for stockSymbol.
+ * Returns one or more values horizontally (current cell and cells to the right).
+ *
+ * @param {"GOOG"} stockSymbol the stock's ticker symbol
+ * @param {"openPrice"|"highPrice"|"lowPrice"|"closePrice"|"lastPrice"|"totalVolume"|"mark"|"quoteTime"|"askPrice"|"bidPrice"|"bidSize"|"askSize"|"lastSize"|"bidTime"|"askTime"|"tradeTime"|"52WeekHigh"|"52WeekLow"|"bidMICId"|"askMICId"|"lastMICId"|"markChange"|"postMarketChange"|"postMarketPercentChange"|"netChange"|"netPercentChange"|"markPercentChange"|"securityStatus"} quoteFields One or more quote fields separated by commas. Leave blank for "closePrice"
+ * @customfunction
+ */
+function schwab_GetQuote(stockSymbol, quoteFields) {
+  // Check if stockSymbol is empty
+  if (stockSymbol === "" || stockSymbol === null || typeof stockSymbol === "undefined") {
+    return "Stock symbol is empty";
+  }
+
+  // Default to "closePrice" if quoteFields is blank
+  if (quoteFields === "" || quoteFields === null || typeof quoteFields === "undefined") {
+    quoteFields = "closePrice";
+  }
+
+  // Valid fields that exist under the .quote object
+  var validQuoteFields = [
+    "openPrice","highPrice","lowPrice","closePrice","lastPrice","totalVolume",
+    "mark","quoteTime","askPrice","bidPrice",
+    "bidSize","askSize","lastSize","bidTime","askTime",
+    "tradeTime","52WeekHigh","52WeekLow",
+    "bidMICId","askMICId","lastMICId",
+    "markChange","postMarketChange","postMarketPercentChange",
+    "netChange","netPercentChange","markPercentChange",
+    "securityStatus"
+  ];
+
+  // Split the requested fields, trim whitespace, and remove empty entries
+  var requestedFields = quoteFields.toString().split(",")
+    .map(function(f) { return f.trim(); })
+    .filter(function(f) { return f.length > 0; });
+
+  // Validate every requested field
+  for (var i = 0; i < requestedFields.length; i++) {
+    if (validQuoteFields.indexOf(requestedFields[i]) === -1) {
+      return "Invalid quote field: '" + requestedFields[i] +
+             "'. Valid options are: " + validQuoteFields.join(", ");
+    }
+  }
+
+  var authorization = schwab_GetBearerString();
+  var options = {
+    "method": "GET",
+    "headers": {"Authorization": authorization},
+    "muteHttpExceptions": true
+  };
+  var myurl = "https://api.schwabapi.com/marketdata/v1/quotes?symbols=" + stockSymbol;
+  var result = UrlFetchApp.fetch(myurl, options);
+
+  var contents = result.getContentText();
+  var responseCode = result.getResponseCode();
+
+  Logger.log("schwab_GetQuote HTTP " + responseCode + " → " + contents);
+
+  if (responseCode !== 200) {
+    return "HTTP Error " + responseCode + ": " + contents.substring(0, 150);
+  }
+
+  var json;
+  try {
+    json = JSON.parse(contents);
+  } catch (e) {
+    return "Invalid JSON response";
+  }
+  Logger.log(json);
+
+  // Defensive checks so we never crash on .quote
+  if (!json || !json[stockSymbol]) {
+    return "Symbol not found or no data returned for: " + stockSymbol;
+  }
+
+  if (!json[stockSymbol]["quote"]) {
+    return "No quote data available for: " + stockSymbol;
+  }
+
+  var quote = json[stockSymbol]["quote"];
+  var output = [];
+
+  // Collect the requested fields in the order the user specified
+  for (var j = 0; j < requestedFields.length; j++) {
+    var field = requestedFields[j];
+    var value = quote[field];
+
+    if (value === undefined || value === null) {
+      output.push("Field '" + field + "' not found");
+    } else {
+      output.push(value);
+    }
+  }
+
+  Logger.log("Quote " + stockSymbol + ": " + output.join(", "));
+
+  // Returning a 1-row array makes the values spill horizontally across columns
+  return [output];
+}
 
 /**
- * Returns the positions in your Schwab portfolio with the following fields in an array: [ Stock Symbol | Quantity | Average Price | Market Value | Current Day P/L | Current Day P/L % ]
+ * Returns the positions in your Schwab portfolio with the following fields:
+ * [ Symbol | Quantity | Average Price | Market Value | Current Day P/L | Current Day P/L % ]
  *
  * @customfunction
  */
 function schwab_Positions() {
   var authorization = schwab_GetBearerString();
   var options = {
-    "method" : "GET",
-    "headers" :  {"Authorization" : authorization},
+    method: "GET",
+    headers: { "Authorization": authorization },
+    muteHttpExceptions: true   // important – so we can see the real error
   };
-  var extraOptions = "?fields=positions";
 
-  var myUrl =
-    "https://api.schwabapi.com/trader/v1/accounts/" +  extraOptions;
+  // Correct URL (no trailing slash before the query string)
+  var myUrl = "https://api.schwabapi.com/trader/v1/accounts?fields=positions";
   var result = UrlFetchApp.fetch(myUrl, options);
-
-  //Parse JSON
+  var responseCode = result.getResponseCode();
   var contents = result.getContentText();
-  var json = JSON.parse(contents);
-  var positions = json[0]["securitiesAccount"]["positions"];
+
+  // Helpful debugging – look in Executions / Logs
+  Logger.log("HTTP " + responseCode + " → " + contents);
+
+  if (responseCode !== 200) {
+    return [["Error", "HTTP " + responseCode, contents.substring(0, 200)]];
+  }
+
+  var json;
+  try {
+    json = JSON.parse(contents);
+  } catch (e) {
+    return [["Error", "Invalid JSON", contents.substring(0, 200)]];
+  }
+
+  // Defensive checks
+  if (!json || !json[0] || !json[0].securitiesAccount) {
+    return [["Error", "Unexpected response structure", JSON.stringify(json).substring(0, 200)]];
+  }
+
+  var positions = json[0].securitiesAccount.positions;
+
+  // No positions is a normal situation – return a clear message instead of crashing
+  if (!positions || !Array.isArray(positions) || positions.length === 0) {
+    return [["No positions found"]];
+  }
 
   var attributes = [
-    "instrument", // The stock symbol is inside this returned "instrument" object.
+    "instrument",
     "longQuantity",
     "averagePrice",
     "marketValue",
@@ -147,32 +279,28 @@ function schwab_Positions() {
   ];
 
   var array = [];
-  var item = [];
 
-  for (var stocki = 0; stocki < positions.length; stocki++) {
-    // Iterate over all returned positions
-    for (var attributei = 0; attributei < attributes.length; attributei++) {
-      // Iterate over the wanted attributes to find the corresponding value in the returned positions
-      if (attributes[attributei] === "instrument") {
-        item.push(positions[stocki][attributes[attributei]]["symbol"]);
+  for (var i = 0; i < positions.length; i++) {
+    var pos = positions[i];
+    var item = [];
+
+    for (var a = 0; a < attributes.length; a++) {
+      if (attributes[a] === "instrument") {
+        item.push(pos.instrument && pos.instrument.symbol ? pos.instrument.symbol : "");
       } else {
-        item.push(positions[stocki][attributes[attributei]]);
+        item.push(pos[attributes[a]] != null ? pos[attributes[a]] : "");
       }
     }
     array.push(item);
-    item = [];
   }
 
+  // Sort by Current Day P/L % (highest first)
   array.sort(function(b, a) {
-    // Sorted by currentDayProfitLossPercentage
-    return a[5] - b[5];
+    return (a[5] || 0) - (b[5] || 0);
   });
-
-   Logger.log(array)
 
   return array;
 }
-
 
 //*****************************AUTHENTICATION FUNCTIONS****************************************************************
 
